@@ -43,6 +43,7 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 
+import java.text.DecimalFormat;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -85,6 +86,11 @@ public class DownloadNotifier {
      */
     @GuardedBy("mDownloadSpeed")
     private final LongSparseLongArray mDownloadTouch = new LongSparseLongArray();
+
+    /**
+     * Formatter for giving transfer speeds with maximum of one decimal places
+     */
+    private final DecimalFormat mFormatter = new DecimalFormat("#.#");
 
     public DownloadNotifier(Context context) {
         mContext = context;
@@ -223,9 +229,22 @@ public class DownloadNotifier {
                     percentText = res.getString(R.string.download_percent, percent);
 
                     if (speed > 0) {
-                        // use Formatter interface for determining speed unit
-                        speedText = res.getString(R.string.download_speed,
-                                Formatter.formatFileSize(mContext, speed));
+                        // Determine postfix for download speed (B/s, KB/s or MB/s)
+                        String postFix = null;
+                        double speedNormalized = 0.0;
+
+                        if (speed < 1024) {
+                            postFix = " B/s";
+                            speedNormalized = speed;
+                        } else if (speed < 1048576) {
+                            postFix = " KB/s";
+                            speedNormalized = (double)speed / 1024.0;
+                        } else if (speed < 1073741824) {
+                            postFix = " MB/s";
+                            speedNormalized = (double)speed / 1048576.0;
+                        }
+
+                        speedText = mFormatter.format(speedNormalized) + postFix;
 
                         final long remainingMillis = ((total - current) * 1000) / speed;
                         remainingText = res.getString(R.string.download_remaining,
@@ -242,10 +261,15 @@ public class DownloadNotifier {
             final Notification notif;
             if (cluster.size() == 1) {
                 final Notification.InboxStyle inboxStyle = new Notification.InboxStyle(builder);
+
                 final DownloadInfo info = cluster.iterator().next();
 
-                builder.setContentTitle(getDownloadTitle(res, info));
-                builder.setContentText(remainingText);
+                final String filename = getDownloadTitle(res, info).toString();
+
+                inboxStyle.addLine(filename);
+                builder.setContentTitle(filename);
+
+                String contentText = null;
 
                 if (type == TYPE_ACTIVE) {
                     if (!TextUtils.isEmpty(info.mDescription)) {
@@ -260,6 +284,13 @@ public class DownloadNotifier {
                         inboxStyle.setSummaryText(speedText + ", " + remainingText);
                     }
 
+                    if (TextUtils.isEmpty(speedText) || TextUtils.isEmpty(remainingText)) {
+                        contentText = res.getString(R.string.download_running);
+                    } else {
+                        contentText = speedText + ", " + remainingText;
+                    }
+
+                    inboxStyle.setSummaryText(contentText);
                     builder.setContentInfo(percentText);
 
                 } else if (type == TYPE_WAITING) {
